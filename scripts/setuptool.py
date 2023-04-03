@@ -22,6 +22,10 @@ TMUX_STR            = 'tmux'
 BOOTNODE_STR        = 'bootnode'
 NODE_STR            = 'node'
 BOOTNODE_IDX        = 0
+MASTERNODE_IDX        = 1
+FUSE_MOUNT_POINT    = 'FuseMnt'
+ETHEREUM_DATA_DIR    = 'EthData'
+
 
 def get_local_assets(app):
     return os.path.join(os.environ['PROJ_HOME'], ASSETS_STR, app)
@@ -30,13 +34,13 @@ def get_local_builddir():
     return os.path.join(os.environ['PROJ_HOME'], BUILDDIR_STR)
 
 def get_target_assets(app, session):
-    return '_'.join([ASSETS_STR, app, session])
+    return os.path.join(os.environ['PROJ_PARENT'], FUSE_MOUNT_POINT)
 
 def get_target_datadir(app, session):
     return os.path.join(get_target_assets(app, session), DATADIR_STR)
 
 def get_target_install_script(app, session):
-    return os.path.join(get_target_assets(app, session), INSTALL_FILE_STR)
+    return os.path.join(get_target_assets(app, session), ETHEREUM_STR, INSTALL_FILE_STR)
 
 def get_target_account_logs(app, session):
     return os.path.join(get_target_datadir(app, session), ACCOUNT_LOGS_STR)
@@ -59,13 +63,12 @@ def install_node(node, pkey, session):
     target_assets = get_target_assets(ETHEREUM_STR, session)
     target_filename = get_target_install_script(ETHEREUM_STR, session)
 
+
     logging.info('Preparing Node: {}'.format(node.name))
 
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     client.connect(hostname=node.hostname, username=node.username, port=node.port, pkey=pkey)
-    stdin,stdout,stderr = client.exec_command("rm -rf {}".format(target_assets)) 
-     
     logging.info('Copying: {}'.format(asset_dir))
     scp_cmd = 'scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -r {} {}@{}:{}'.format(
         asset_dir, node.username, node.hostname, target_assets
@@ -75,7 +78,7 @@ def install_node(node, pkey, session):
 
     stdin,stdout,stderr = client.exec_command("mkdir {}".format(get_target_datadir(ETHEREUM_STR, session))) 
     stdin,stdout,stderr = client.exec_command("chmod +x {}".format(target_filename)) 
-    stdin,stdout,stderr = client.exec_command("./{}".format(target_filename))
+    stdin,stdout,stderr = client.exec_command("{}".format(target_filename))
     for line in stdout.readlines(): print(line.strip())
     for line in stderr.readlines(): print(line.strip())
     client.close()
@@ -94,9 +97,8 @@ tmux split-window -h
 tmux send-keys -t 0 "{2}" Enter
 tmux send-keys -t 1 "{2}" Enter
     '''.format(
-        session, node.name, ssh_cmd, 
-        get_target_datadir(ETHEREUM_STR, session),
-        get_target_account_logs(ETHEREUM_STR, session))
+        session, node.name, ssh_cmd
+    )
     return script
 
 def init_node_ethereum(node, session):
@@ -106,7 +108,7 @@ tmux select-window -t '={0}'
 tmux send-keys -t 1 "sleep 30" Enter
 tmux send-keys -t 0 "yes '' | geth account new --datadir {1} |& tee -a {2}" Enter
 tmux send-keys -t 0 "sleep 10" Enter
-tmux send-keys -t 0 "yes '' | geth init --datadir {1} {3}/genesis.json |& tee -a {2}" Enter
+tmux send-keys -t 0 "yes '' | geth init --datadir {1} {1}/genesis.json |& tee -a {2}" Enter
 tmux send-keys -t 0 "sleep 5" Enter
 tmux send-keys -t 0 "tree -a {3} |& tee -a {2}" Enter
 tmux send-keys -t 0 "ifconfig |& tee -a {2}" Enter
@@ -172,7 +174,25 @@ tmux send-keys -t 0 "geth attach {0}/geth.ipc" Enter
         
     sp.check_call('chmod +x {}'.format(filename), shell=True)
 
-def generate_ethereum_node_script(details, session, bootnodeenr):
+def get_miner_address(node, app, session, pkey):
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.connect(hostname=node.hostname, username=node.username, port=node.port, pkey=pkey)       
+
+    query ='cat {}'.format(get_target_account_logs(ETHEREUM_STR,session))
+    #query='cat /users/Girish/EthData/datadir/logs.txt'
+    stdin, stdout, stderr = client.exec_command(query)
+    net_dump = stdout.readlines()
+   
+    result =""
+    for line in net_dump:
+        if 'Public address of the key:' in line:
+            result =line.split("Public address of the key:")[1].strip()
+            
+    client.close()
+    return result
+
+def generate_ethereum_node_script(details, session, bootnodeenr, pkey):
     filename = get_ethereum_node_script(session)
     logging.info('Generating ethereum node script: {}'.format(filename))
     with open(filename, 'w') as ff:
@@ -183,14 +203,18 @@ echo Session={0}
 tmux switch -t {0}
         '''.format(session))
         for idx, node in enumerate(details):
+            mineCmd=""
             if idx == BOOTNODE_IDX:
                 continue
+            if idx == MASTERNODE_IDX:
+                minerAddress = get_miner_address(node,ETHEREUM_STR, session, pkey)
+                mineCmd= '--mine --miner.threads 10 --miner.etherbase {0}'.format(minerAddress)
             ff.write(init_node_ethereum(node, session))
             ff.write('''\
 tmux send-keys -t 0 "sleep 30" Enter
-tmux send-keys -t 1 "geth --datadir {0} --networkid 16 --port {1} --bootnodes '{2}'" Enter
+tmux send-keys -t 1 "geth --datadir {0} --networkid 16 --port {1} {2} --bootnodes '{3}' " Enter
 tmux send-keys -t 0 "geth attach {0}/geth.ipc" Enter
-            '''.format(get_target_datadir(ETHEREUM_STR, session), 30305+idx, bootnodeenr))
+            '''.format(get_target_datadir(ETHEREUM_STR, session), 30305+idx, mineCmd ,bootnodeenr))
     
     sp.check_call('chmod +x {}'.format(filename), shell=True)
 
@@ -227,14 +251,55 @@ def read_enr(node, pkey, session):
     client.close()
     return enr
 
+def get_unreliabefs_scripts(node,session):
+    ssh_cmd = 'ssh -oStrictHostKeyChecking=no -p {} {}@{}'.format(
+        node.port, node.username, node.hostname
+    )
+    script = '''\
+tmux new-window -d -t {0} -n {2}
+tmux select-window -t '={2}'
+tmux send-keys -t :. "{1}" Enter
+tmux send-keys -t :. "sudo umount -f FuseMnt" Enter
+tmux send-keys -t :. "rm -rf FuseMnt" Enter
+tmux send-keys -t :. "rm -rf EthData" Enter
+tmux send-keys -t :. "mkdir FuseMnt" Enter
+tmux send-keys -t :. "mkdir EthData" Enter
+tmux send-keys -t :. "sudo apt-get install -y cmake gcc cmake fuse libfuse-dev" Enter
+
+tmux new-window -d -t {0} -n {3}
+tmux select-window -t '={3}' 
+tmux send-keys -t :. "{1}" Enter
+tmux send-keys -t :. "git clone https://github.com/ligurio/unreliablefs.git" Enter
+tmux send-keys -t :. "cd unreliablefs" Enter
+tmux send-keys -t :. "cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug" Enter
+tmux send-keys -t :. "cmake --build build --parallel" Enter
+tmux send-keys -t :. "./build/unreliablefs/unreliablefs ../FuseMnt/ -basedir=../EthData -d" Enter
+
+    '''.format(
+            session,
+            ssh_cmd,
+            node.name+"_CmakeSetup",
+            node.name+"_FuseSetup",
+        )
+    sp.check_call('{}'.format(script), shell=True)
+    
+
+
+def unreliablefs_setup(node, session):
+    logging.info('== Installing Fuse FS ==')
+    get_unreliabefs_scripts(node, session)
+            
+
 def handle_ethereum(details, pkey, session):
     logging.info('== Installing Ethereum Tools ==')
-    for node in details:
-        install_node(node, pkey, session)
-    
     logging.info('Initialising tmux session: {}'.format(session))
     sp.check_call('{}'.format(get_tmux_script(session)), shell=True)
 
+    for node in details:
+            unreliablefs_setup(node, session)
+            time.sleep(10)
+            install_node(node, pkey, session)
+    
     generate_ethereum_bootnode_script(details[BOOTNODE_IDX], session)
 
     logging.info('Working to setup bootnode at: {}'.format(details[BOOTNODE_IDX].name))
@@ -245,7 +310,7 @@ def handle_ethereum(details, pkey, session):
 
     bootnode_enr = read_enr(details[BOOTNODE_IDX], pkey, session)
 
-    generate_ethereum_node_script(details, session, bootnode_enr)
+    generate_ethereum_node_script(details, session, bootnode_enr,pkey)
 
     logging.info('Working to setup other nodes')
     sp.check_call('{}'.format(get_ethereum_node_script(session)), shell=True)
@@ -254,6 +319,8 @@ def handle_ethereum(details, pkey, session):
     time.sleep(45)
 
     sp.check_call('tmux attach -t {}'.format(session), shell=True)
+
+
     
 def main():
     logging.basicConfig(level=logging.INFO)
@@ -264,6 +331,7 @@ def main():
     parser.add_argument("--pvt-key", help="private key (file)")
     parser.add_argument("--session", help="unique session identifier")
     parser.add_argument("--app", help="which app to prepare (currently only ethereum)")
+
     args = parser.parse_args()
 
     # !!! this will fail if you use RSA, change the following accordingly
@@ -277,6 +345,7 @@ def main():
 
     # generate tmux setup
     generate_tmux_script(details, session)
+
     
     if args.app == ETHEREUM_STR:
         # prepare remote hosts: copy over data, install relevant libraries
