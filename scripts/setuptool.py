@@ -39,6 +39,9 @@ def get_target_assets(app, session):
 def get_target_datadir(app, session):
     return os.path.join(get_target_assets(app, session), DATADIR_STR)
 
+def get_target_installdir(app, session):
+    return os.path.join(get_target_assets(app, session), ETHEREUM_STR)
+
 def get_target_install_script(app, session):
     return os.path.join(get_target_assets(app, session), ETHEREUM_STR, INSTALL_FILE_STR)
 
@@ -108,7 +111,7 @@ tmux select-window -t '={0}'
 tmux send-keys -t 1 "sleep 30" Enter
 tmux send-keys -t 0 "yes '' | geth account new --datadir {1} |& tee -a {2}" Enter
 tmux send-keys -t 0 "sleep 10" Enter
-tmux send-keys -t 0 "yes '' | geth init --datadir {1} {1}/genesis.json |& tee -a {2}" Enter
+tmux send-keys -t 0 "yes '' | geth init --datadir {1} {4}/genesis.json |& tee -a {2}" Enter
 tmux send-keys -t 0 "sleep 5" Enter
 tmux send-keys -t 0 "tree -a {3} |& tee -a {2}" Enter
 tmux send-keys -t 0 "ifconfig |& tee -a {2}" Enter
@@ -117,7 +120,8 @@ tmux send-keys -t 0 "ifconfig |& tee -a {2}" Enter
             node.name,
             get_target_datadir(ETHEREUM_STR, session),
             get_target_account_logs(ETHEREUM_STR, session),
-            get_target_assets(ETHEREUM_STR, session)
+            get_target_assets(ETHEREUM_STR, session),
+            get_target_installdir(ETHEREUM_STR, session)
         )
     return script
 
@@ -180,15 +184,18 @@ def get_miner_address(node, app, session, pkey):
     client.connect(hostname=node.hostname, username=node.username, port=node.port, pkey=pkey)       
 
     query ='cat {}'.format(get_target_account_logs(ETHEREUM_STR,session))
+    print(query)
     #query='cat /users/Girish/EthData/datadir/logs.txt'
     stdin, stdout, stderr = client.exec_command(query)
+    print("miner addr")
+    print(stderr.read())
     net_dump = stdout.readlines()
-   
+    print(net_dump)
     result =""
     for line in net_dump:
         if 'Public address of the key:' in line:
             result =line.split("Public address of the key:")[1].strip()
-            
+    print(result)
     client.close()
     return result
 
@@ -260,15 +267,20 @@ tmux new-window -d -t {0} -n {2}
 tmux select-window -t '={2}'
 tmux send-keys -t :. "{1}" Enter
 tmux send-keys -t :. "sudo umount -f FuseMnt" Enter
+
+tmux new-window -d -t {0} -n {3}
+tmux select-window -t '={3}'
+tmux send-keys -t :. "{1}" Enter
 tmux send-keys -t :. "rm -rf FuseMnt" Enter
 tmux send-keys -t :. "rm -rf EthData" Enter
 tmux send-keys -t :. "mkdir FuseMnt" Enter
 tmux send-keys -t :. "mkdir EthData" Enter
 tmux send-keys -t :. "sudo apt-get install -y cmake gcc cmake fuse libfuse-dev" Enter
 
-tmux new-window -d -t {0} -n {3}
-tmux select-window -t '={3}' 
+tmux new-window -d -t {0} -n {4}
+tmux select-window -t '={4}' 
 tmux send-keys -t :. "{1}" Enter
+tmux send-keys -t :. "bash" Enter
 tmux send-keys -t :. "git clone https://github.com/ligurio/unreliablefs.git" Enter
 tmux send-keys -t :. "cd unreliablefs" Enter
 tmux send-keys -t :. "cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug" Enter
@@ -278,6 +290,7 @@ tmux send-keys -t :. "./build/unreliablefs/unreliablefs ../FuseMnt/ -basedir=../
     '''.format(
             session,
             ssh_cmd,
+            node.name+"_UnmountFs",
             node.name+"_CmakeSetup",
             node.name+"_FuseSetup",
         )
