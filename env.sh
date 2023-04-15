@@ -1,7 +1,7 @@
 #! /bin/bash
 
-sudo apt-get install pip
-pip install paramiko
+sudo apt-get install python3-pip
+pip3 install paramiko
 
 export PROJ_PARENT="$(dirname "$(pwd)")"
 export PROJ_HOME=$(pwd)

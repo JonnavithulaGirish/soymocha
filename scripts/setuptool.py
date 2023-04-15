@@ -104,13 +104,40 @@ tmux send-keys -t 1 "{2}" Enter
     )
     return script
 
-def init_node_ethereum(node, session):
-    script = '''\
 
-tmux select-window -t '={0}'
-tmux send-keys -t 1 "sleep 30" Enter
-tmux send-keys -t 0 "yes '' | geth account new --datadir {1} |& tee -a {2}" Enter
+def setup_account_ethereum(node, session, pkey):
+    ssh_cmd = 'ssh -oStrictHostKeyChecking=no -p {} {}@{}'.format(
+        node.port, node.username, node.hostname
+    )
+
+    script = '''\
+tmux new-window -d -t {0} -n {2}
+tmux select-window -t '={2}'
+tmux send-keys -t :. "{1}" Enter
+tmux send-keys -t 0 "sleep 5" Enter
+tmux send-keys -t 0 "yes '' | geth account new --datadir {3} |& tee -a {4}" Enter
 tmux send-keys -t 0 "sleep 10" Enter
+    '''.format(
+            session,
+            ssh_cmd,
+            node.name+"_accountSetup",
+            get_target_datadir(ETHEREUM_STR, session),
+            get_target_account_logs(ETHEREUM_STR, session),
+        )
+    print("======Creating New Accounts===========")
+    sp.check_call('{}'.format(script), shell=True)
+    
+    
+    
+
+# tmux select-window -t '={0}'
+# tmux send-keys -t 1 "sleep 30" Enter
+# tmux send-keys -t 0 "yes '' | geth account new --datadir {1} |& tee -a {2}" Enter
+# tmux send-keys -t 0 "sleep 10" Enter
+
+def init_node_ethereum(node, session, isBootNode = False):
+    script = '''\
+tmux select-window -t '={0}'
 tmux send-keys -t 0 "yes '' | geth init --datadir {1} {4}/genesis.json |& tee -a {2}" Enter
 tmux send-keys -t 0 "sleep 5" Enter
 tmux send-keys -t 0 "tree -a {3} |& tee -a {2}" Enter
@@ -123,7 +150,18 @@ tmux send-keys -t 0 "ifconfig |& tee -a {2}" Enter
             get_target_assets(ETHEREUM_STR, session),
             get_target_installdir(ETHEREUM_STR, session)
         )
-    return script
+
+    bootnodeSript = '''\
+tmux select-window -t '={0}'
+tmux send-keys -t 1 "sleep 30" Enter
+tmux send-keys -t 0 "yes '' | geth account new --datadir {1} |& tee -a {2}" Enter
+tmux send-keys -t 0 "sleep 10" Enter
+    '''.format(
+            node.name,
+            get_target_datadir(ETHEREUM_STR, session),
+            get_target_account_logs(ETHEREUM_STR, session),
+        )
+    return script if not isBootNode else bootnodeSript+script
 
 def generate_tmux_script(details, session):
     filename = get_tmux_script(session)
@@ -163,10 +201,9 @@ echo Session={0}
 tmux switch -t {0}
         '''.format(session))
 
-        ff.write(init_node_ethereum(bootnode, session))
+        ff.write(init_node_ethereum(bootnode, session, True))
 
         ff.write('''\
-
 tmux send-keys -t 1 "geth --datadir {0} --networkid 16 --nat extip:{1}" Enter
 tmux send-keys -t 0 "sleep 30" Enter
 tmux send-keys -t 0 "geth attach --exec admin.nodeInfo.enr {0}/geth.ipc" Enter
@@ -198,6 +235,13 @@ def get_miner_address(node, app, session, pkey):
     print(result)
     client.close()
     return result
+
+def create_ethereum_account(details, session, pkey):
+    for idx, node in enumerate(details):
+        if idx == BOOTNODE_IDX:
+            continue
+        print("===========setting up account========")
+        setup_account_ethereum(node,session,pkey)
 
 def generate_ethereum_node_script(details, session, bootnodeenr, pkey):
     filename = get_ethereum_node_script(session)
@@ -275,7 +319,7 @@ tmux send-keys -t :. "rm -rf FuseMnt" Enter
 tmux send-keys -t :. "rm -rf EthData" Enter
 tmux send-keys -t :. "mkdir FuseMnt" Enter
 tmux send-keys -t :. "mkdir EthData" Enter
-tmux send-keys -t :. "sudo apt-get install -y cmake gcc cmake fuse libfuse-dev" Enter
+tmux send-keys -t :. "sudo apt-get install -y gcc fuse libfuse-dev" Enter
 
 tmux new-window -d -t {0} -n {4}
 tmux select-window -t '={4}' 
@@ -313,25 +357,29 @@ def handle_ethereum(details, pkey, session):
             time.sleep(10)
             install_node(node, pkey, session)
     
-    generate_ethereum_bootnode_script(details[BOOTNODE_IDX], session)
+    # generate_ethereum_bootnode_script(details[BOOTNODE_IDX], session)
 
-    logging.info('Working to setup bootnode at: {}'.format(details[BOOTNODE_IDX].name))
-    sp.check_call('{}'.format(get_ethereum_bootnode_script(session)), shell=True)
+    # logging.info('Working to setup bootnode at: {}'.format(details[BOOTNODE_IDX].name))
+    # sp.check_call('{}'.format(get_ethereum_bootnode_script(session)), shell=True)
 
-    logging.info('Sleeping while bootnode setup is in progress')
-    time.sleep(45)
+    # logging.info('Sleeping while bootnode setup is in progress')
+    # time.sleep(45)
 
-    bootnode_enr = read_enr(details[BOOTNODE_IDX], pkey, session)
+    # bootnode_enr = read_enr(details[BOOTNODE_IDX], pkey, session)
 
-    generate_ethereum_node_script(details, session, bootnode_enr,pkey)
+    create_ethereum_account(details, session, pkey)
+    logging.info('Sleeping while accounts setup is in progress')
+    # time.sleep(30)
+
+    generate_ethereum_node_script(details, session, "bootnode_enr",pkey)
 
     logging.info('Working to setup other nodes')
-    sp.check_call('{}'.format(get_ethereum_node_script(session)), shell=True)
+    # sp.check_call('{}'.format(get_ethereum_node_script(session)), shell=True)
 
     logging.info('Sleeping while other node setup is in progress')
-    time.sleep(45)
+    # time.sleep(45)
 
-    sp.check_call('tmux attach -t {}'.format(session), shell=True)
+    # sp.check_call('tmux attach -t {}'.format(session), shell=True)
 
 
     
