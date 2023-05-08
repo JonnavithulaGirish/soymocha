@@ -5,7 +5,8 @@
 
 # General work flow
 1. Copy over cloudlab manifest to an xml file.
-2. Use setuptool to prepare scripts and launch
+2. Use setuptool to prepare scripts and launch ethereum private network
+3. Also setup include UnreliableFS integration to test and identify issues
 
 # Example ethereum setup
 
@@ -13,3 +14,5 @@
 source env.sh
 python scripts/setuptool.py --app ethereum --manifest manifest.xml --pvt-key ~/.ssh/id_ed25519 --session saladbowl
 ```
+
+
