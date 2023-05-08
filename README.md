@@ -6,7 +6,7 @@
 # General work flow
 1. Copy over cloudlab manifest to an xml file.
 2. Use setuptool to prepare scripts and launch ethereum private network
-3. Also setup include UnreliableFS integration to test and identify issues
+3. Also the setup includes UnreliableFS integration to test and identify issues.
 
 # Example ethereum setup
 
